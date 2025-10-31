@@ -1,21 +1,19 @@
 import os
+import time
+import re
+import argparse
 import PIL.Image
 import torch
 import numpy as np
 from transformers import AutoModelForCausalLM
 from janus.models import MultiModalityCausalLM, VLChatProcessor
-import time
-import re
+from janus.utils.profiling import JSONProfiler
+from typing import Optional
 
-# Specify the path to the model
-model_path = "deepseek-ai/Janus-1.3B"
-vl_chat_processor: VLChatProcessor = VLChatProcessor.from_pretrained(model_path)
-tokenizer = vl_chat_processor.tokenizer
-
-vl_gpt: MultiModalityCausalLM = AutoModelForCausalLM.from_pretrained(
-    model_path, trust_remote_code=True
-)
-vl_gpt = vl_gpt.to(torch.bfloat16).cuda().eval()
+# Globals are initialized in main() to allow optional profiling of model load
+vl_chat_processor: VLChatProcessor
+vl_gpt: MultiModalityCausalLM
+tokenizer = None
 
 
 def create_prompt(user_input: str) -> str:
@@ -110,7 +108,7 @@ def generate(
         PIL.Image.fromarray(visual_img[i]).save(save_path)
 
 
-def interactive_image_generator():
+def interactive_image_generator(prof: Optional[JSONProfiler] = None):
     print("Welcome to the interactive image generator!")
 
     # Ask for the number of images at the start of the session
@@ -135,16 +133,91 @@ def interactive_image_generator():
         short_prompt = re.sub(r'\W+', '_', user_input)[:50]
 
         print(f"Generating {parallel_size} image(s) for: '{user_input}'")
-        generate(
-            mmgpt=vl_gpt,
-            vl_chat_processor=vl_chat_processor,
-            prompt=prompt,
-            short_prompt=short_prompt,
-            parallel_size=parallel_size  # Pass the user-specified number of images
-        )
+
+        # For profiling-derived metrics
+        prompt_len = len(vl_chat_processor.tokenizer.encode(prompt))
+        image_token_num_per_image = 576
+
+        if prof and prof.enabled:
+            prof.start_run(tag="generation", extra={
+                "prompt": user_input,
+                "parallel_size": parallel_size,
+                "image_token_num_per_image": image_token_num_per_image,
+            })
+            gen_start = time.perf_counter()
+            with prof.measure("generate", reset_cuda_peak=True):
+                generate(
+                    mmgpt=vl_gpt,
+                    vl_chat_processor=vl_chat_processor,
+                    prompt=prompt,
+                    short_prompt=short_prompt,
+                    parallel_size=parallel_size,
+                    image_token_num_per_image=image_token_num_per_image
+                )
+            gen_end = time.perf_counter()
+            elapsed = max(1e-9, gen_end - gen_start)
+            aggregate_img_tokens = image_token_num_per_image * parallel_size
+            prof.add_metrics({
+                "prompt_len": prompt_len,
+                "image_tokens_generated_per_image": image_token_num_per_image,
+                "image_tokens_generated_aggregate": aggregate_img_tokens,
+                "kv_seq_len_final": prompt_len + image_token_num_per_image,
+                "image_tokens_per_s_aggregate": round(aggregate_img_tokens / elapsed, 3),
+                "image_tokens_per_s_per_image": round(image_token_num_per_image / elapsed, 3),
+                "cfg_streams": 2,
+                "effective_batch": parallel_size * 2,
+            })
+            prof.end_run()
+        else:
+            generate(
+                mmgpt=vl_gpt,
+                vl_chat_processor=vl_chat_processor,
+                prompt=prompt,
+                short_prompt=short_prompt,
+                parallel_size=parallel_size,
+                image_token_num_per_image=image_token_num_per_image
+            )
 
         print("Image generation complete! Check the 'generated_samples' folder for the output.\n")
 
 
+def main():
+    parser = argparse.ArgumentParser(description="Interactive Janus-Pro image generator")
+    parser.add_argument("--profile", action="store_true", help="Enable JSON profiling output")
+    parser.add_argument("--metrics-out", type=str, default="metrics.json", help="Path to write JSON metrics")
+    args = parser.parse_args()
+
+    # Specify the path to the model
+    model_path = "/data/yaxin/Janus/ckpt/Janus-Pro-7B"
+
+    prof = JSONProfiler(enabled=args.profile, script="interactivechat.py", model_path=model_path, out_path=args.metrics_out)
+
+    # Load model with optional profiling
+    global vl_chat_processor, tokenizer, vl_gpt
+    if prof.enabled:
+        prof.start_run(tag="model_load")
+        with prof.measure("from_pretrained_and_move", reset_cuda_peak=True):
+            vl_chat_processor = VLChatProcessor.from_pretrained(model_path)
+            tokenizer = vl_chat_processor.tokenizer
+            vl_gpt = AutoModelForCausalLM.from_pretrained(
+                model_path, trust_remote_code=True,loop_language_layers=False
+            )
+            vl_gpt = vl_gpt.to(torch.bfloat16).cuda().eval()
+        prof.end_run()
+    else:
+        vl_chat_processor = VLChatProcessor.from_pretrained(model_path)
+        tokenizer = vl_chat_processor.tokenizer
+        vl_gpt = AutoModelForCausalLM.from_pretrained(
+            model_path, trust_remote_code=True
+        )
+        vl_gpt = vl_gpt.to(torch.bfloat16).cuda().eval()
+
+    try:
+        interactive_image_generator(prof=prof)
+    finally:
+        if prof and prof.enabled:
+            prof.dump()
+
+
 if __name__ == "__main__":
-    interactive_image_generator()
+    main()

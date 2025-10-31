@@ -52,9 +52,10 @@
 
 <p align="center">
   <a href="#2-model-download"><b>📥 Model Download</b></a> |
-  <a href="#3-quick-start"><b>⚡ Quick Start</b></a> |
-  <a href="#4-license"><b>📜 License</b></a> |
-  <a href="#5-citation"><b>📖 Citation</b></a> <br>
+  <a href="#3-installation"><b>🔧 Installation</b></a> |
+  <a href="#4-quick-start"><b>⚡ Quick Start</b></a> |
+  <a href="#5-license"><b>📜 License</b></a> |
+  <a href="#6-citation"><b>📖 Citation</b></a> <br>
   <!-- 📄 Paper Link (<a href="https://arxiv.org/abs/2410.13848"><b>Janus</b></a>, <a href="https://arxiv.org/abs/2410.13848"><b>JanusFlow</b></a>) | -->
   🤗 Online Demo (<a href="https://huggingface.co/spaces/deepseek-ai/Janus-Pro-7B"><b>Janus-Pro-7B</b></a>, <a href="https://huggingface.co/spaces/deepseek-ai/Janus-1.3B"><b>Janus</b></a>, <a href="https://huggingface.co/spaces/deepseek-ai/JanusFlow-1.3B"><b>JanusFlow</b></a>)
 </p>
@@ -117,18 +118,49 @@ permitted under these terms.
 
 
 
-## 3. Quick Start
-<details>
-<summary><h3>Janus-Pro</h3></summary>
+## 3. Installation
 
-### Installation
+### Prerequisites
 
-On the basis of `Python >= 3.8` environment, install the necessary dependencies by running the following command:
+Before installing the Janus codebase, you need to install system-level build dependencies. The `sentencepiece` package requires these tools to compile from source:
 
-```shell
+**Option 1: Using apt (Linux/Debian-based systems)**
+```bash
+sudo apt-get update
+sudo apt-get install -y cmake build-essential pkg-config
+```
+
+**Option 2: Using conda (recommended if you're using conda)**
+```bash
+conda install -c conda-forge cmake gxx_linux-64 make pkg-config -y
+```
+
+**Option 3: Using Homebrew (macOS)**
+```bash
+brew install cmake pkg-config
+```
+
+### Install Python Dependencies
+
+**Option 1: Using pip**
+```bash
 pip install -e .
 ```
 
+**Option 2: Using uv (faster)**
+```bash
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install dependencies
+uv sync
+```
+
+If you encounter build errors with `sentencepiece`, make sure all the prerequisites listed above are installed.
+
+## 4. Quick Start
+<details>
+<summary><h3>Janus-Pro</h3></summary>
 
 ### Simple Inference Example
 
@@ -306,15 +338,6 @@ Have Fun!
 
 <details>
 <summary><h3>Janus</h3></summary>
-
-### Installation
-
-On the basis of `Python >= 3.8` environment, install the necessary dependencies by running the following command:
-
-```shell
-pip install -e .
-```
-
 
 ### Simple Inference Example
 
@@ -507,10 +530,9 @@ python demo/fastapi_client.py
     
 ### Installation
 
-On the basis of `Python >= 3.8` environment, install the necessary dependencies by running the following command:
+In addition to the base installation, JanusFlow requires an additional dependency:
 
 ```shell
-pip install -e .
 pip install diffusers[torch]
 ```
 
@@ -710,11 +732,11 @@ Have Fun!
     
 </details>
 
-## 4. License
+## 5. License
 
 This code repository is licensed under [the MIT License](https://github.com/deepseek-ai/DeepSeek-LLM/blob/HEAD/LICENSE-CODE). The use of Janus models is subject to [DeepSeek Model License](https://github.com/deepseek-ai/DeepSeek-LLM/blob/HEAD/LICENSE-MODEL).
 
-## 5. Citation
+## 6. Citation
 
 ```bibtex
 @article{chen2025janus,
@@ -739,6 +761,6 @@ This code repository is licensed under [the MIT License](https://github.com/deep
 }
 ```
 
-## 6. Contact
+## 7. Contact
 
 If you have any questions, please raise an issue or contact us at [service@deepseek.com](mailto:service@deepseek.com).

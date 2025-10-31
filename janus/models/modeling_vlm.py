@@ -17,6 +17,8 @@
 # IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+import types
+
 import torch
 from attrdict import AttrDict
 from einops import rearrange
@@ -156,6 +158,8 @@ class MultiModalityConfig(PretrainedConfig):
 
     language_config: LlamaConfig
 
+    loop_language_layers: bool = True
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         vision_config = kwargs.get("vision_config", {})
@@ -178,6 +182,8 @@ class MultiModalityConfig(PretrainedConfig):
             self.language_config = language_config
         else:
             self.language_config = LlamaConfig(**language_config)
+
+        self.loop_language_layers = kwargs.get("loop_language_layers", True)
 
 
 class MultiModalityPreTrainedModel(PreTrainedModel):
@@ -217,6 +223,24 @@ class MultiModalityCausalLM(MultiModalityPreTrainedModel):
 
         language_config = config.language_config
         self.language_model = LlamaForCausalLM(language_config)
+        self.loop_language_layers = bool(getattr(config, "loop_language_layers", True))
+        self._loop_configured = not self.loop_language_layers
+        self._loop_forward_pre_hook = None
+
+        if self.loop_language_layers:
+
+            def _post_load_hook(module, incompatible_keys):
+                self._configure_looped_language_model()
+
+            self.language_model.register_load_state_dict_post_hook(_post_load_hook)
+
+            def _forward_pre_hook(module, inputs):
+                self._ensure_loop_configuration()
+                return None
+
+            self._loop_forward_pre_hook = (
+                self.language_model.register_forward_pre_hook(_forward_pre_hook)
+            )
 
     def prepare_inputs_embeds(
         self,
@@ -226,6 +250,7 @@ class MultiModalityCausalLM(MultiModalityPreTrainedModel):
         images_emb_mask: torch.LongTensor,
         **kwargs,
     ):
+        self._ensure_loop_configuration()
         """
 
         Args:
@@ -260,7 +285,89 @@ class MultiModalityCausalLM(MultiModalityPreTrainedModel):
         return inputs_embeds
 
     def prepare_gen_img_embeds(self, image_ids: torch.LongTensor):
+        self._ensure_loop_configuration()
         return self.gen_aligner(self.gen_embed(image_ids))
+
+    def _ensure_loop_configuration(self):
+        if not self.loop_language_layers:
+            return
+        if not getattr(self, "_loop_configured", False):
+            self._configure_looped_language_model()
+
+    def _configure_looped_language_model(self):
+        if not self.loop_language_layers:
+            return
+        if getattr(self, "_loop_configured", False):
+            return
+
+        llama_model = self.language_model.model
+        original_layers = llama_model.layers
+        num_original_layers = len(original_layers)
+
+        if num_original_layers <= 5:
+            # Nothing to prune; keep default stack.
+            hook_handle = getattr(self, "_loop_forward_pre_hook", None)
+            if hook_handle is not None:
+                hook_handle.remove()
+                self._loop_forward_pre_hook = None
+            self._loop_configured = True
+            return
+
+        # Keep the first four decoder layers and the final layer (per Janus-Pro requirement).
+        kept_indices = list(range(min(4, num_original_layers - 1))) + [
+            num_original_layers - 1
+        ]
+
+        for new_idx, old_idx in enumerate(kept_indices):
+            layer = original_layers[old_idx]
+
+            if hasattr(layer, "self_attn") and hasattr(layer.self_attn, "layer_idx"):
+                layer.self_attn.layer_idx = new_idx
+
+            if not hasattr(layer, "_looped_forward"):
+
+                def looped_forward(self, hidden_states, *args, **kwargs):
+                    original_forward = getattr(self, "_original_forward")
+                    loop_kwargs = kwargs
+                    no_cache_kwargs = None
+                    for loop_idx in range(4):
+                        if loop_idx == 0:
+                            hidden_states = original_forward(
+                                hidden_states, *args, **loop_kwargs
+                            )
+                        else:
+                            if no_cache_kwargs is None:
+                                no_cache_kwargs = dict(loop_kwargs)
+                                no_cache_kwargs["past_key_values"] = None
+                                if "use_cache" in no_cache_kwargs:
+                                    no_cache_kwargs["use_cache"] = False
+                                if "cache_position" in no_cache_kwargs:
+                                    no_cache_kwargs["cache_position"] = None
+                            hidden_states = original_forward(
+                                hidden_states, *args, **no_cache_kwargs
+                            )
+                    return hidden_states
+
+                layer._original_forward = layer.forward
+                layer.forward = types.MethodType(looped_forward, layer)
+                layer._looped_forward = True  # mark so we only wrap once
+
+        llama_model.layers = torch.nn.ModuleList(
+            [original_layers[idx] for idx in kept_indices]
+        )
+        num_looped_layers = len(kept_indices)
+        llama_model.config.num_hidden_layers = num_looped_layers
+        self.language_model.config.num_hidden_layers = num_looped_layers
+        if hasattr(llama_model.config, "layer_types"):
+            llama_model.config.layer_types = llama_model.config.layer_types[
+                :num_looped_layers
+            ]
+            self.language_model.config.layer_types = llama_model.config.layer_types
+        self._loop_configured = True
+        hook_handle = getattr(self, "_loop_forward_pre_hook", None)
+        if hook_handle is not None:
+            hook_handle.remove()
+            self._loop_forward_pre_hook = None
 
 
 AutoConfig.register("vision", VisionConfig)

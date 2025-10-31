@@ -1,0 +1,52 @@
+{
+  "timestamp": "2025-10-31T19:11:21",
+  "script": "interactivechat.py",
+  "model_path": "/data/yaxin/Janus/ckpt/Janus-Pro-7B",
+  "env": {
+    "device": "cuda",
+    "gpu_name": "NVIDIA RTX 6000 Ada Generation"
+  },
+  "runs": [
+    {
+      "tag": "model_load",
+      "sections": [
+        {
+          "name": "from_pretrained_and_move",
+          "time_s": 8.991504,
+          "gpu": {
+            "allocated_bytes": 14849406976,
+            "max_allocated_bytes": 14849406976,
+            "reserved_bytes": 14856224768
+          },
+          "cpu_rss_bytes": 2365800448
+        }
+      ]
+    },
+    {
+      "tag": "generation",
+      "sections": [
+        {
+          "name": "generate",
+          "time_s": 12.142003,
+          "gpu": {
+            "allocated_bytes": 14858975232,
+            "max_allocated_bytes": 15624547328,
+            "reserved_bytes": 15860760576
+          },
+          "cpu_rss_bytes": 2500337664,
+          "prompt_len": 11,
+          "image_tokens_generated_per_image": 576,
+          "image_tokens_generated_aggregate": 576,
+          "kv_seq_len_final": 587,
+          "image_tokens_per_s_aggregate": 47.437,
+          "image_tokens_per_s_per_image": 47.437,
+          "cfg_streams": 2,
+          "effective_batch": 2
+        }
+      ],
+      "prompt": "a cute dog",
+      "parallel_size": 1,
+      "image_token_num_per_image": 576
+    }
+  ]
+}
